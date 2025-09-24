@@ -1,0 +1,185 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(data.table)
+library(ggplot2)
+library(lubridate)
+library(xtable)
+library(stringr)
+```
+Wczytanie danych
+
+```{r}
+options(timeout = max(300, getOption("timeout")))
+```
+
+```{r}
+kprm_raw <- fread("https://repod.icm.edu.pl/api/access/datafile/75948")
+
+kprm_raw[, wynik2:= fcase(
+  ad_result %in% c("nabór zakończony wyborem kandydatki/kandydata", 
+                "informacja o zatrudnieniu kandydatki/kandydata", 
+                "nabór zakończony zatrudnieniem kandydatki/kandydata"), "zatrudniono",
+  ad_result %in% c("nabór zakończony bez wyboru kandydatki/kandydata", 
+                   "nabór zakończony bez zatrudnienia kandydatki/kandydata", 
+                   "nie zatrudniono kandydatki/kandydata",
+                   "brak ofert kandydatek/kandydatów", 
+                   "nie wyłoniono najlepszych kandydatek/kandydatów", 
+                   "oferty kandydatek/kandydatów nie spełniały wymagań formalnych"), "nie zatrudniono",
+  ad_result %in% c("anulowano nabór"), "nabor anulowano",
+  ad_result == "decyzja kandydatki/kandydata", "rezygnacja kandydata",
+  default = "inne"
+)]
+head(kprm_raw)
+```
+
+
+```{r}
+kprm_raw[, .(N=.N, wak = sum(ad_vacancies)), wynik2][order(-N)] |>
+  xtable() |>
+  print.xtable(include.rownames = F)
+```
+
+```{r}
+kprm <- fread("https://repod.icm.edu.pl/api/access/datafile/75949")
+kprm[kprm_raw, on="ad_id", wynik2:=i.ad_result]
+kprm[, ym:= round_date(date_announced, week_start = 1, unit= "month")]
+kprm[, powiat := paste0(str_pad(voivodeship,2, "left", "0"), 
+                        str_pad(district,2, "left", "0"))]
+head(kprm)
+```
+
+```{r}
+kprm[year %in% 2018:2023, .N, .(result, wynik2)] |>
+  xtabs(N~wynik2+result, data = _)
+```
+
+```{r}
+kprm[year %in% 2018:2023, .(ogl = .N, wak = sum(vacancies)), ym] |>
+  melt(id.vars = 1) |>
+  ggplot(data = _, aes(x = ym, y = value, group = variable, color = variable)) +
+  geom_line() +
+  scale_color_brewer(palette = "Set1",
+                     labels = c("ogl" = "Ogłoszeń", 
+                                "wak" = "Wakatów")) + 
+  labs(x = "Miesiąc umieszczenia ogłoszenia", y = "Liczba", color = "Liczba") -> p1
+
+ggsave(plot = p1, filename = "figs/fig1-counts.png", width = 12, height = 6.75, units = "in", dpi = 300)
+```
+
+```{r}
+df1 <- kprm[, .(n=.N, m = mean(result)), .(type=len_requirements)][, group := "Wymagania"]
+df2 <- kprm[, .(n=.N, m = mean(result)), .(type=len_nice_to_have)][, group := "Dodatowych wymagania"]
+df3 <- kprm[, .(n=.N, m = mean(result)), .(type=len_responsibilities)][, group := "Obowiązki"]
+
+rbind(df1,df2,df3) |>
+  ggplot(data = _, aes(x = type, y = m*100, group = group, color = group)) +
+  geom_point(shape = 1, aes(size = n)) +
+  geom_smooth(method = "loess", se = F) +
+  labs(x = "Liczba wymienionych", y = "Odsetek pozytywnych naborów", 
+       color = "Typ", size = "Liczba ogłoszeń") -> p2
+
+ggsave(plot = p2, filename = "figs/fig2-length.png", width = 12, height = 6.75, units = "in", dpi = 300)
+```
+
+Liczba wejść a sukces
+
+```{r}
+ggplot(data = kprm, aes(x = ad_views, fill = factor(result))) +
+  geom_density(alpha = 0.5)  +
+  facet_wrap(~year) +
+  scale_fill_brewer(type  = "qual", palette = "Set1",
+                    labels = c("0"="Nie", "1"="Tak")) +
+  labs(x = "Liczba wejść na stronę", y = "Gęstość", fill = "Obsadzenie") -> p3
+  
+ggsave(plot = p3, filename = "figs/fig3-adsviews.png", width = 12, height = 6.75, units = "in", dpi = 300)
+```
+
+
+```{r}
+ggplot(data = kprm, aes(x = salary_for_position, fill = factor(result))) +
+  geom_density(alpha = 0.5)  +
+  scale_fill_brewer(type  = "qual", palette = "Set1",
+                    labels = c("0"="Nie", "1"="Tak")) +
+  labs(x = "Wynagrodzenie", y = "Gęstość", fill = "Obsadzenie") -> p4
+
+ggsave(plot = p4, filename = "figs/fig4-salary.png", width = 12, height = 6.75, units = "in", dpi = 300)
+```
+
+```{r}
+kprm[, .(n=.N, m=mean(result)*100), .(institution)] |>
+  ggplot(data = _, aes(x = m, weight = n)) +
+  geom_histogram(color = "black", fill = "white") +
+  labs(x = "Odsetek obsadzonych miejsc w instutucji",
+       y = "Liczba ogłoszeń") -> p5
+
+ggsave(plot = p5, filename = "figs/fig5-instytucje.png", width = 12, height = 6.75, units = "in", dpi = 300)
+```
+
+
+```{r}
+kprm[, .(n=.N, m=mean(result)*100, sd = sd(result)), .(ym)] |>
+  ggplot(data = _, aes(x = ym, y = m, group = 1, weight = n)) +
+  geom_point() + 
+  geom_line() + 
+  labs(x = "Odsetek obsadzonych miejsc",
+       y = "Liczba ogłoszeń") +
+  scale_y_continuous(limits = c(0, 100)) +
+  geom_smooth(method = "lm", se = F, col = "red", linetype = "dashed") -> p6
+
+ggsave(plot = p6, filename = "figs/fig6-trend.png", width = 12, height = 6.75, units = "in", dpi = 300)
+```
+
+```{r}
+kprm[, .(n=.N, m=mean(result)*100, sd = sd(result)), .(ym, position_category)] |>
+  ggplot(data = _, aes(x = ym, y = m, group = 1, weight = n)) +
+  geom_point() + 
+  geom_line() + 
+  labs(x = "Odsetek obsadzonych miejsc",
+       y = "Liczba ogłoszeń") +
+  scale_y_continuous(limits = c(0, 100)) +
+  geom_smooth(method = "lm", se = F, col = "red", linetype = "dashed") +
+  facet_wrap(~position_category) -> p7
+
+ggsave(plot = p7, filename = "figs/fig7-trend-kategoria.png", width = 12, height = 6.75, units = "in", dpi = 300)
+```
+
+```{r}
+kprm[, .(n=.N, m=mean(result)*100, sd = sd(result)), .(ym, job_field)] |>
+  ggplot(data = _, aes(x = ym, y = m, group = 1, weight = n)) +
+  geom_point() + 
+  geom_line() + 
+  labs(x = "Odsetek obsadzonych miejsc",
+       y = "Liczba ogłoszeń") +
+  scale_y_continuous(limits = c(0, 100)) +
+  geom_smooth(method = "lm", se = F, col = "red", linetype = "dashed") +
+  facet_wrap(~job_field) -> p8
+
+ggsave(plot = p8, filename = "figs/fig8-trend-job-class.png", width = 12, height = 6.75, units = "in", dpi = 300)
+```
+
+```{r}
+kprm[, .(n=.N, m=mean(result)*100), .(position)][order(-n)][1:10] |>
+  xtable()
+```
+```{r}
+kprm[, .(n=.N, m=mean(result)*100), .(job_field)][order(-n)] |>
+  xtable()
+```
+
+```{r}
+kprm[, .(n=.N, m=mean(result)*100), .(education_level)]|>
+  xtable() |>
+  print.xtable(include.rownames = F)
+```
+
+```{r}
+kprm[, .(n=.N, m=mean(result)*100), .(powiat = paste0(str_pad(voivodeship,2, "left", "0"), 
+                                                      str_pad(district,2, "left", "0")))][order(-n)][1:10] |>
+  xtable()
+
+```
+

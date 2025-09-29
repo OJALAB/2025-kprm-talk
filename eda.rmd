@@ -9,13 +9,10 @@ library(ggplot2)
 library(lubridate)
 library(xtable)
 library(stringr)
-```
-Wczytanie danych
-
-```{r}
 options(timeout = max(300, getOption("timeout")))
 ```
 
+Pobieramy dane z Internetu 
 ```{r}
 kprm_raw <- fread("https://repod.icm.edu.pl/api/access/datafile/75948")
 
@@ -43,6 +40,8 @@ kprm_raw[, .(N=.N, wak = sum(ad_vacancies)), wynik2][order(-N)] |>
   print.xtable(include.rownames = F)
 ```
 
+Dane wyczyszczone
+
 ```{r}
 kprm <- fread("https://repod.icm.edu.pl/api/access/datafile/75949")
 kprm[kprm_raw, on="ad_id", wynik2:=i.ad_result]
@@ -51,10 +50,28 @@ kprm[, powiat := paste0(str_pad(voivodeship,2, "left", "0"),
                         str_pad(district,2, "left", "0"))]
 head(kprm)
 ```
+Zapis do pliku
 
 ```{r}
-kprm[year %in% 2018:2023, .N, .(result, wynik2)] |>
-  xtabs(N~wynik2+result, data = _)
+saveRDS(kprm, file = "data-raw/kprm.rds")
+```
+
+```{r}
+feature_importance <- data.table(
+  feature = c("Instytucja", "Wykształcenie", "Powiat (lokalny rynek pracy)", 
+              "Stanowisko (własna klasyfikacja)", "Ogłoszenie sprzed 2020", 
+              "Stanowisko (wg rozporządzenia)", 
+              "Liczba wymagań", 
+              "Wskaźnik migracji", 
+              "Odsetek zatrudnionych na umowę",
+              "Ogłoszenie po 2020"),
+  importance = c(0.353, 0.259, 0.218, 0.178, 0.023, 0.02, 0.02, 0.009, 0.009, 0.007)
+)
+
+feature_importance[, rel :=importance/sum(importance)*100]
+
+feature_importance |> 
+  xtable()
 ```
 
 ```{r}
@@ -65,14 +82,16 @@ kprm[year %in% 2018:2023, .(ogl = .N, wak = sum(vacancies)), ym] |>
   scale_color_brewer(palette = "Set1",
                      labels = c("ogl" = "Ogłoszeń", 
                                 "wak" = "Wakatów")) + 
-  labs(x = "Miesiąc umieszczenia ogłoszenia", y = "Liczba", color = "Liczba") -> p1
+  labs(x = "Miesiąc umieszczenia ogłoszenia", y = "Liczba", color = "Liczba") +
+  theme(text = element_text(size=15)) -> p1
 
+p1
 ggsave(plot = p1, filename = "figs/fig1-counts.png", width = 12, height = 6.75, units = "in", dpi = 300)
 ```
 
 ```{r}
 df1 <- kprm[, .(n=.N, m = mean(result)), .(type=len_requirements)][, group := "Wymagania"]
-df2 <- kprm[, .(n=.N, m = mean(result)), .(type=len_nice_to_have)][, group := "Dodatowych wymagania"]
+df2 <- kprm[, .(n=.N, m = mean(result)), .(type=len_nice_to_have)][, group := "Wymagania dodatkowe"]
 df3 <- kprm[, .(n=.N, m = mean(result)), .(type=len_responsibilities)][, group := "Obowiązki"]
 
 rbind(df1,df2,df3) |>
@@ -80,8 +99,9 @@ rbind(df1,df2,df3) |>
   geom_point(shape = 1, aes(size = n)) +
   geom_smooth(method = "loess", se = F) +
   labs(x = "Liczba wymienionych", y = "Odsetek pozytywnych naborów", 
-       color = "Typ", size = "Liczba ogłoszeń") -> p2
-
+       color = "Typ", size = "Liczba ogłoszeń") +
+  theme(text = element_text(size=15))  -> p2
+p2
 ggsave(plot = p2, filename = "figs/fig2-length.png", width = 12, height = 6.75, units = "in", dpi = 300)
 ```
 
@@ -93,8 +113,10 @@ ggplot(data = kprm, aes(x = ad_views, fill = factor(result))) +
   facet_wrap(~year) +
   scale_fill_brewer(type  = "qual", palette = "Set1",
                     labels = c("0"="Nie", "1"="Tak")) +
-  labs(x = "Liczba wejść na stronę", y = "Gęstość", fill = "Obsadzenie") -> p3
+  labs(x = "Liczba wejść na stronę", y = "Gęstość", fill = "Obsadzenie") +
+  theme(text = element_text(size=15))  -> p3
   
+p3
 ggsave(plot = p3, filename = "figs/fig3-adsviews.png", width = 12, height = 6.75, units = "in", dpi = 300)
 ```
 
@@ -104,8 +126,10 @@ ggplot(data = kprm, aes(x = salary_for_position, fill = factor(result))) +
   geom_density(alpha = 0.5)  +
   scale_fill_brewer(type  = "qual", palette = "Set1",
                     labels = c("0"="Nie", "1"="Tak")) +
-  labs(x = "Wynagrodzenie", y = "Gęstość", fill = "Obsadzenie") -> p4
-
+  labs(x = "Wynagrodzenie", y = "Gęstość", fill = "Obsadzenie") +
+  theme(text = element_text(size=15)) + 
+  geom_rug() -> p4
+p4
 ggsave(plot = p4, filename = "figs/fig4-salary.png", width = 12, height = 6.75, units = "in", dpi = 300)
 ```
 
@@ -114,8 +138,10 @@ kprm[, .(n=.N, m=mean(result)*100), .(institution)] |>
   ggplot(data = _, aes(x = m, weight = n)) +
   geom_histogram(color = "black", fill = "white") +
   labs(x = "Odsetek obsadzonych miejsc w instutucji",
-       y = "Liczba ogłoszeń") -> p5
-
+       y = "Liczba ogłoszeń") +
+  theme(text = element_text(size=15)) +
+  geom_rug() -> p5
+p5
 ggsave(plot = p5, filename = "figs/fig5-instytucje.png", width = 12, height = 6.75, units = "in", dpi = 300)
 ```
 
@@ -123,41 +149,60 @@ ggsave(plot = p5, filename = "figs/fig5-instytucje.png", width = 12, height = 6.
 ```{r}
 kprm[, .(n=.N, m=mean(result)*100, sd = sd(result)), .(ym)] |>
   ggplot(data = _, aes(x = ym, y = m, group = 1, weight = n)) +
-  geom_point() + 
-  geom_line() + 
-  labs(x = "Odsetek obsadzonych miejsc",
-       y = "Liczba ogłoszeń") +
+  geom_point(shape = 1, aes( size = n)) + 
+  #geom_line() + 
+  labs(x = "Miesiąc umieszczenia ogłoszenia",
+       y = "Odsetek obsadzonych miejsc",
+       size = "Liczba ogłoszeń") +
   scale_y_continuous(limits = c(0, 100)) +
-  geom_smooth(method = "lm", se = F, col = "red", linetype = "dashed") -> p6
-
+  geom_smooth(method = "lm", se = F, col = "red", linetype = "dashed") +
+  theme(text = element_text(size=15))  -> p6
+p6
 ggsave(plot = p6, filename = "figs/fig6-trend.png", width = 12, height = 6.75, units = "in", dpi = 300)
 ```
 
 ```{r}
 kprm[, .(n=.N, m=mean(result)*100, sd = sd(result)), .(ym, position_category)] |>
   ggplot(data = _, aes(x = ym, y = m, group = 1, weight = n)) +
-  geom_point() + 
-  geom_line() + 
-  labs(x = "Odsetek obsadzonych miejsc",
-       y = "Liczba ogłoszeń") +
+  geom_point(shape = 1, aes( size = n)) + 
+  labs(x = "Miesiąc umieszczenia ogłoszenia",
+       y = "Odsetek obsadzonych miejsc",
+       size = "Liczba ogłoszeń") +
   scale_y_continuous(limits = c(0, 100)) +
   geom_smooth(method = "lm", se = F, col = "red", linetype = "dashed") +
-  facet_wrap(~position_category) -> p7
-
+  facet_wrap(~position_category) +
+  theme(text = element_text(size=15))  -> p7
+p7
 ggsave(plot = p7, filename = "figs/fig7-trend-kategoria.png", width = 12, height = 6.75, units = "in", dpi = 300)
 ```
 
 ```{r}
 kprm[, .(n=.N, m=mean(result)*100, sd = sd(result)), .(ym, job_field)] |>
+  transform(job_field2 = fcase(
+  job_field == "documents", "Dokumenty",
+  job_field == "law", "Prawo",
+  job_field == "vet", "Weterynaria",
+  job_field == "uniformed services", "Służby mundurowe",
+  job_field == "tech/construction", "Budowa i technika",
+  job_field == "pharmacy/chemistry", "Farmacja i chemia",
+  job_field == "environment", "Środowisko",
+  job_field == "IT/statistics", "IT i statystyka",
+  job_field == "other", "Inne",
+  job_field == "other_manager", "Zarządzanie",
+  job_field == "water", "Związane z morzem",
+  default = job_field
+)) |> 
   ggplot(data = _, aes(x = ym, y = m, group = 1, weight = n)) +
-  geom_point() + 
-  geom_line() + 
-  labs(x = "Odsetek obsadzonych miejsc",
-       y = "Liczba ogłoszeń") +
+  geom_point(shape = 1, aes( size = n)) + 
+  labs(x = "Miesiąc umieszczenia ogłoszenia",
+       y = "Odsetek obsadzonych miejsc",
+       size = "Liczba ogłoszeń") +
   scale_y_continuous(limits = c(0, 100)) +
   geom_smooth(method = "lm", se = F, col = "red", linetype = "dashed") +
-  facet_wrap(~job_field) -> p8
-
+  facet_wrap(~job_field2)  + theme(
+  legend.position = c(0.85, 0.15),
+  legend.justification = c(0.5, 0.5)) -> p8
+p8
 ggsave(plot = p8, filename = "figs/fig8-trend-job-class.png", width = 12, height = 6.75, units = "in", dpi = 300)
 ```
 
@@ -165,6 +210,7 @@ ggsave(plot = p8, filename = "figs/fig8-trend-job-class.png", width = 12, height
 kprm[, .(n=.N, m=mean(result)*100), .(position)][order(-n)][1:10] |>
   xtable()
 ```
+
 ```{r}
 kprm[, .(n=.N, m=mean(result)*100), .(job_field)][order(-n)] |>
   xtable()
